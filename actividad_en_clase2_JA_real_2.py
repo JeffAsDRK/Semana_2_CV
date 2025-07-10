@@ -1,61 +1,68 @@
 import os
 import pandas as pd
-import datetime 
+import datetime
 from models import TransferSegmentation, save_model, load_model
-import torch 
-import torch.nn as nn 
-from torchvision.transforms import v2 
+import torch
+import torch.nn as nn
+from torchvision.transforms import v2
 from utils_jeff import Load_Dataset
-import torch.utils.tensorboard as tb 
+import torch.utils.tensorboard as tb
 import numpy as np
 import torch
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
 
-# Ruta principal donde están las carpetas como 'abyss', 'gran_paradiso_island', etc.
-base_path = 'dense_data'
+import os
+import pandas as pd
+import re
 
-# Inicializamos una lista para guardar los datos
+base_path = "dense_data"
 data = []
 
-# Recorremos cada subcarpeta (nivel de mapa)
+
+def extract_index(filename):
+    """Extrae el número del archivo, por ejemplo 'frame_0159.png' -> '0159'"""
+    match = re.search(r"(\d+)", filename)
+    return match.group(1) if match else None
+
+
 for level_name in os.listdir(base_path):
     level_path = os.path.join(base_path, level_name)
-
-    # Nos aseguramos de que sea una carpeta
     if not os.path.isdir(level_path):
         continue
 
-    # Rutas de interés: frame y combined_visual
-    frame_path = os.path.join(level_path, 'frame')
-    combined_visual_path = os.path.join(level_path, 'combined')
+    frame_path = os.path.join(level_path, "frame")
+    combined_path = os.path.join(level_path, "combined")
 
-    # Leemos los nombres de archivos de cada carpeta (si existen)
-    frame_images = os.listdir(frame_path) if os.path.isdir(frame_path) else []
-    combined_visual_images = os.listdir(combined_visual_path) if os.path.isdir(combined_visual_path) else []
+    frames = {}
+    combineds = {}
 
-    # Ajustamos la cantidad para que estén pareados (opcional: puedes usar el largo máximo)
-    max_len = max(len(frame_images), len(combined_visual_images))
+    # Leer frames
+    if os.path.isdir(frame_path):
+        for fname in os.listdir(frame_path):
+            index = extract_index(fname)
+            if index:
+                frames[index] = fname
 
-    # Completamos con None si las listas no son del mismo tamaño
-    frame_images += [None] * (max_len - len(frame_images))
-    combined_visual_images += [None] * (max_len - len(combined_visual_images))
+    # Leer combined visuals
+    if os.path.isdir(combined_path):
+        for cname in os.listdir(combined_path):
+            index = extract_index(cname)
+            if index:
+                combineds[index] = cname
 
-    # Guardamos en la lista de datos
-    for f_img, cv_img in zip(frame_images, combined_visual_images):
-        data.append({
-            'name': level_name,
-            'frame': f_img,
-            'combined': cv_img
-        })
+    # Buscar coincidencias exactas por índice
+    for index in sorted(set(frames.keys()) & set(combineds.keys())):
+        data.append(
+            {"name": level_name, "frame": frames[index], "combined": combineds[index]}
+        )
 
-# Creamos el DataFrame
+# Crear DataFrame final
 df = pd.DataFrame(data)
 
-
-datase = Load_Dataset(df, base_path, batch_size=64, aumentation=5, num_workers=4)
-random_state=42
+datase = Load_Dataset(df, base_path, batch_size=512, aumentation=10, num_workers=16)
+random_state = 42
 torch.manual_seed(random_state)
 
 
@@ -63,7 +70,10 @@ def post_proces(predicted_logits):
     predicted_mask = torch.argmax(predicted_logits, dim=1)  # [B, H, W]
     return predicted_mask
 
-def calculate_multiclass_iou_f1(predicted_logits, target_mask, num_classes, epsilon=1e-6):
+
+def calculate_multiclass_iou_f1(
+    predicted_logits, target_mask, num_classes, epsilon=1e-6
+):
     """
     Calcula el IoU y el F1-score por clase y sus promedios (mIoU, macro-F1).
 
@@ -75,14 +85,14 @@ def calculate_multiclass_iou_f1(predicted_logits, target_mask, num_classes, epsi
         mean_iou: Promedio de IoU entre clases
         mean_f1: Promedio de F1 entre clases
     """
-    predicted_mask= post_proces(predicted_logits)
+    predicted_mask = post_proces(predicted_logits)
 
     ious = []
     f1s = []
 
     for cls in range(num_classes):
-        pred_cls = (predicted_mask == cls)
-        target_cls = (target_mask == cls)
+        pred_cls = predicted_mask == cls
+        target_cls = target_mask == cls
 
         intersection = (pred_cls & target_cls).sum().float()
         union = (pred_cls | target_cls).sum().float()
@@ -109,11 +119,12 @@ NUM_CLASSES = 7
 # Inicializar contador de clases
 pixel_counts = np.zeros(NUM_CLASSES, dtype=np.int64)
 import cv2
+
 # Recorremos todas las máscaras
 for _, row in df.iterrows():
     mask_path = f"./{base_path}/{row['name']}/combined/{row['combined']}"
     mask = cv2.imread(mask_path)
-    mask=cv2.cvtColor(mask,cv2.COLOR_BGR2GRAY)  # matriz de clases (HxW)
+    mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)  # matriz de clases (HxW)
     # Contar ocurrencias de cada clase
     unique, counts = np.unique(mask, return_counts=True)
     for cls, cnt in zip(unique, counts):
@@ -129,18 +140,31 @@ class_weights_tensor = torch.tensor(class_weights, dtype=torch.float32)
 
 model = TransferSegmentation(n_classes=7)
 
-transform = model.weights.transforms() # resulta mejor con la transformacion propia
+transform = model.weights.transforms()  # resulta mejor con la transformacion propia
 
 
 train_loader = datase.load_train(transform=transform)
 val_loader = datase.load_val(transform=transform)
 test_loader = datase.load_test(transform=transform)
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = "cuda:5" if torch.cuda.is_available() else "cpu"
 model.to(device)
+#optimizer = torch.optim.Adagrad(
+#    model.parameters(),
+#    lr=1e-2,
+#    weight_decay=1e-4
+#)
+criterion = nn.CrossEntropyLoss(
+    weight=class_weights_tensor.to(device)
+)  # aplica sigmoid directamente sobre los logits del modelo
 
-criterion = nn.CrossEntropyLoss(weight=class_weights_tensor.to(device)) # aplica sigmoid directamente sobre los logits del modelo
-optimizer = torch.optim.Adagrad(model.parameters(), lr=1e-4)
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max')
+optimizer = torch.optim.AdamW(
+    model.parameters(),
+    lr=1e-2,                # learning rate inicial
+    weight_decay=0,      # regularización L2
+    betas=(0.9, 0.999),     # valores por defecto para Adam
+    eps=1e-8                # estabilidad numérica
+ )
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max")
 
 
 class Trainer:
@@ -174,24 +198,26 @@ class Trainer:
         self.patience = 0
         self.global_step = 0
         self.writer = SummaryWriter(log_dir, flush_secs=1) if log_dir else None
-        self.val_stoping=0
-        self.train_stoping=0
+        self.val_stoping = 0
+        self.train_stoping = 0
 
     def train(self):
         print(f"{'Epoch':<7}{'Phase':<8}{'Loss':<10}{'mIoU (%)':<10}{'F1 (%)':<10}")
         print("=" * 45)
         for epoch in range(self.max_epochs):
             epoch_loss, epoch_iou, epoch_f1 = self.train_one_epoch(epoch)
-    
+
             self.scheduler.step(epoch_iou)
-    
+
             # Evaluación después de entrenamiento
             val_iou, val_f1 = self.evaluate(epoch)
-    
+
             # Mostrar resumen en columna
-            print(f"{epoch+1:<7}{'Train':<8}{epoch_loss:<10.4f}{epoch_iou:<10.2f}{epoch_f1:<10.2f}")
+            print(
+                f"{epoch+1:<7}{'Train':<8}{epoch_loss:<10.4f}{epoch_iou:<10.2f}{epoch_f1:<10.2f}"
+            )
             print(f"{'':<7}{'Val':<8}{'-':<10}{val_iou:<10.2f}{val_f1:<10.2f}")
-    
+
             # TensorBoard logging
             if self.writer:
                 self.writer.add_scalar("epoch_loss", epoch_loss, epoch)
@@ -199,29 +225,30 @@ class Trainer:
                 self.writer.add_scalar("epoch_mean_f1", epoch_f1, epoch)
                 self.writer.add_scalar("val_mean_iou", val_iou, epoch)
                 self.writer.add_scalar("val_mean_f1", val_f1, epoch)
-                self.writer.add_scalar("epoch_lr", self.optimizer.param_groups[0]["lr"], epoch)
-    
+                self.writer.add_scalar(
+                    "epoch_lr", self.optimizer.param_groups[0]["lr"], epoch
+                )
+
             # Guardado del mejor modelo
-            
+
             if val_iou > self.best_iou:
                 self.save_model("TransferSegmentation_Jeff.th")
                 self.best_iou = val_iou
                 self.patience = 0
 
             if val_iou < self.val_stoping:
-               if epoch_iou > self.train_stoping:
-                   self.train_stoping=epoch_iou
-                   self.patience=0
-               else:
-                   self.patience+=1 
-            else: 
-                self.val_stoping=val_iou
-                self.patience=0
-    
+                if epoch_iou > self.train_stoping:
+                    self.train_stoping = epoch_iou
+                    self.patience = 0
+                else:
+                    self.patience += 1
+            else:
+                self.val_stoping = val_iou
+                self.patience = 0
+
             if self.patience >= self.max_patience:
                 print("Early stopping.")
                 break
-
 
     def train_one_epoch(self, epoch):
         self.model.train()
@@ -231,8 +258,8 @@ class Trainer:
 
         for i, (inputs, targets) in enumerate(self.train_loader):
             print(f"Train Epoch {epoch+1}  {(i+1)*100/total:.2f}%", end="\r")
-            inputs = inputs.to(self.device,non_blocking=True)
-            targets = targets.long().squeeze().to(self.device,non_blocking=True)
+            inputs = inputs.to(self.device, non_blocking=True)
+            targets = targets.long().squeeze().to(self.device, non_blocking=True)
 
             outputs = self.model(inputs)
             loss = self.criterion(outputs, targets)
@@ -253,7 +280,6 @@ class Trainer:
         avg_loss = running_loss / total
         return avg_loss, mean_iou, mean_f1
 
-
     def evaluate(self, epoch):
         self.model.eval()
         ious, f1 = [], []
@@ -262,8 +288,8 @@ class Trainer:
         with torch.no_grad():
             for i, (inputs, targets) in enumerate(self.val_loader):
                 print(f"Val   Epoch {epoch+1}  {(i+1)*100/total:.2f}%", end="\r")
-                inputs = inputs.to(self.device,non_blocking=True)
-                targets = targets.long().squeeze().to(self.device,non_blocking=True)
+                inputs = inputs.to(self.device, non_blocking=True)
+                targets = targets.long().squeeze().to(self.device, non_blocking=True)
 
                 outputs = self.model(inputs)
                 batch_iou, f1_score = calculate_multiclass_iou_f1(
@@ -291,13 +317,15 @@ class Trainer:
         self.global_step += 1
         return mean_iou, mean_f1
 
-
     def save_model(self, filename):
         torch.save(self.model.state_dict(), filename)
         print(f"Modelo guardado como {filename}")
 
-train_logger = None 
-log_dir = f'semantic_segmentation/runs/{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}' 
+
+train_logger = None
+log_dir = (
+    f'semantic_segmentation/runs/{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}'
+)
 
 
 if __name__ == "__main__":
@@ -311,7 +339,7 @@ if __name__ == "__main__":
         device=device,
         log_dir=log_dir,
         num_classes=7,
-        max_epochs=100,
-        max_patience= 25,
+        max_epochs=200,
+        max_patience=25,
     )
     trainer.train()

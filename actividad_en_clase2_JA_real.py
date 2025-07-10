@@ -13,64 +13,53 @@ import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
 
-# Ruta principal donde están las carpetas como 'abyss', 'gran_paradiso_island', etc.
-base_path = 'dense_data'
+import os
+import pandas as pd
+import re
 
-# Inicializamos una lista para guardar los datos
+base_path = 'dense_data'
 data = []
 
-# Recorremos cada subcarpeta (nivel de mapa)
+def extract_index(filename):
+    """Extrae el número del archivo, por ejemplo 'frame_0159.png' -> '0159'"""
+    match = re.search(r'(\d+)', filename)
+    return match.group(1) if match else None
+
 for level_name in os.listdir(base_path):
     level_path = os.path.join(base_path, level_name)
-
-    # Nos aseguramos de que sea una carpeta
     if not os.path.isdir(level_path):
         continue
 
-    # Rutas de interés: frame y combined_visual
     frame_path = os.path.join(level_path, 'frame')
-    combined_visual_path = os.path.join(level_path, 'combined')
+    combined_path = os.path.join(level_path, 'combined')
 
-    # Leemos los nombres de archivos de cada carpeta (si existen)
-    frame_images = os.listdir(frame_path) if os.path.isdir(frame_path) else []
-    combined_visual_images = os.listdir(combined_visual_path) if os.path.isdir(combined_visual_path) else []
+    frames = {}
+    combineds = {}
 
-    # Ajustamos la cantidad para que estén pareados (opcional: puedes usar el largo máximo)
-    max_len = max(len(frame_images), len(combined_visual_images))
+    # Leer frames
+    if os.path.isdir(frame_path):
+        for fname in os.listdir(frame_path):
+            index = extract_index(fname)
+            if index:
+                frames[index] = fname
 
-    # Completamos con None si las listas no son del mismo tamaño
-    frame_images += [None] * (max_len - len(frame_images))
-    combined_visual_images += [None] * (max_len - len(combined_visual_images))
+    # Leer combined visuals
+    if os.path.isdir(combined_path):
+        for cname in os.listdir(combined_path):
+            index = extract_index(cname)
+            if index:
+                combineds[index] = cname
 
-    # Guardamos en la lista de datos
-    for f_img, cv_img in zip(frame_images, combined_visual_images):
+    # Buscar coincidencias exactas por índice
+    for index in sorted(set(frames.keys()) & set(combineds.keys())):
         data.append({
-            'name': level_name,
-            'frame': f_img,
-            'combined': cv_img
+            "name": level_name,
+            "frame": frames[index],
+            "combined": combineds[index]
         })
 
-# Creamos el DataFrame
+# Crear DataFrame final
 df = pd.DataFrame(data)
-
-
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-datase = Load_Dataset(df, base_path, batch_size=64, aumentation=5, num_workers=4)
-=======
-datase = Load_Dataset(df, base_path, batch_size=256, aumentation=5, num_workers=16)
->>>>>>> f6cb91ebbe6bb75a52033d1f4d3210be2bf53889
-=======
-datase = Load_Dataset(df, base_path, batch_size=256, aumentation=5, num_workers=16)
->>>>>>> f6cb91ebbe6bb75a52033d1f4d3210be2bf53889
-=======
-datase = Load_Dataset(df, base_path, batch_size=256, aumentation=5, num_workers=16)
->>>>>>> f6cb91ebbe6bb75a52033d1f4d3210be2bf53889
-=======
-datase = Load_Dataset(df, base_path, batch_size=256, aumentation=5, num_workers=16)
->>>>>>> f6cb91ebbe6bb75a52033d1f4d3210be2bf53889
 random_state=42
 torch.manual_seed(random_state)
 
@@ -122,42 +111,18 @@ def calculate_multiclass_iou_f1(predicted_logits, target_mask, num_classes, epsi
 model = TransferSegmentation(n_classes=7)
 
 transform = model.weights.transforms() # resulta mejor con la transformacion propia
-
+datase = Load_Dataset(df, base_path, batch_size=64, aumentation=5, num_workers=4)
 
 train_loader = datase.load_train(transform=transform)
 val_loader = datase.load_val(transform=transform)
 test_loader = datase.load_test(transform=transform)
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
+
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 model.to(device)
 
 criterion = nn.CrossEntropyLoss() # aplica sigmoid directamente sobre los logits del modelo
 optimizer = torch.optim.Adagrad(model.parameters(), lr=1e-2)
-=======
-=======
->>>>>>> f6cb91ebbe6bb75a52033d1f4d3210be2bf53889
-=======
->>>>>>> f6cb91ebbe6bb75a52033d1f4d3210be2bf53889
-=======
->>>>>>> f6cb91ebbe6bb75a52033d1f4d3210be2bf53889
-device = 'cuda:4' if torch.cuda.is_available() else 'cpu'
-model.to(device)
 
-criterion = nn.CrossEntropyLoss() # aplica sigmoid directamente sobre los logits del modelo
-optimizer = torch.optim.Adagrad(model.parameters(), lr=1e-4)
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
->>>>>>> f6cb91ebbe6bb75a52033d1f4d3210be2bf53889
-=======
->>>>>>> f6cb91ebbe6bb75a52033d1f4d3210be2bf53889
-=======
->>>>>>> f6cb91ebbe6bb75a52033d1f4d3210be2bf53889
-=======
->>>>>>> f6cb91ebbe6bb75a52033d1f4d3210be2bf53889
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max')
 
 
@@ -317,18 +282,7 @@ class Trainer:
 train_logger = None 
 log_dir = f'semantic_segmentation/runs/{datetime.datetime.now().strftime("%Y%m%d-%H%M%S")}' 
 
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
 
-
-
-=======
->>>>>>> f6cb91ebbe6bb75a52033d1f4d3210be2bf53889
-=======
->>>>>>> f6cb91ebbe6bb75a52033d1f4d3210be2bf53889
-=======
->>>>>>> f6cb91ebbe6bb75a52033d1f4d3210be2bf53889
 trainer = Trainer(
     model=model,
     train_loader=train_loader,
@@ -342,22 +296,6 @@ trainer = Trainer(
     max_epochs=100,
     max_patience= 100
 )
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-trainer.train()
-=======
-
 
 trainer.train()
->>>>>>> f6cb91ebbe6bb75a52033d1f4d3210be2bf53889
-=======
 
-
-trainer.train()
->>>>>>> f6cb91ebbe6bb75a52033d1f4d3210be2bf53889
-=======
-
-
-trainer.train()
->>>>>>> f6cb91ebbe6bb75a52033d1f4d3210be2bf53889
