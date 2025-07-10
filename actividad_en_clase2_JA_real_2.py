@@ -179,7 +179,7 @@ class Trainer:
         device,
         log_dir=None,
         num_classes=7,
-        max_epochs=1000,
+        max_epochs=200,
         max_patience=25,
     ):
         self.model = model.to(device)
