@@ -1,18 +1,18 @@
 from torch.utils.data import Dataset, DataLoader
-from torchvision.transforms import v2,InterpolationMode
+from torchvision.transforms import v2
 from PIL import Image
 import torch
 import pandas as pd
 from sklearn.model_selection import train_test_split
-import numpy as np
-import matplotlib.pyplot as plt
+
 DATASET_PATH = "dense_data"
 DEFAULT_TRANSFORM = v2.Compose([v2.ToImage(), v2.ToDtype(torch.float32, scale=True)])
 AUMENTATION_TRANSFORM = v2.Compose(
     [
-        v2.RandomResizedCrop(size=(224, 224), antialias=True),
-        v2.RandomHorizontalFlip(p=0.6),
+        v2.RandomHorizontalFlip(p=0.4),
+        v2.RandomVerticalFlip(p=0.2),
         v2.RandomRotation(45),
+        v2.RandomResizedCrop(size=(224, 224), antialias=True),
     ]
 )
 MASK_TRANSFORM = v2.Compose([
@@ -22,7 +22,6 @@ MASK_TRANSFORM = v2.Compose([
 ])
 
 
-import time
 class Proces_Data(Dataset):
     def __init__(
         self,

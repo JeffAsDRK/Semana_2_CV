@@ -61,7 +61,7 @@ for level_name in os.listdir(base_path):
 # Crear DataFrame final
 df = pd.DataFrame(data)
 
-datase = Load_Dataset(df, base_path, batch_size=512, aumentation=10, num_workers=16)
+datase = Load_Dataset(df, base_path, batch_size=256, aumentation=6, num_workers=16)
 random_state = 42
 torch.manual_seed(random_state)
 
@@ -114,30 +114,30 @@ def calculate_multiclass_iou_f1(
     return mean_iou.item(), mean_f1.item()
 
 
-# Número de clases
-NUM_CLASSES = 7
-# Inicializar contador de clases
-pixel_counts = np.zeros(NUM_CLASSES, dtype=np.int64)
-import cv2
-
-# Recorremos todas las máscaras
-for _, row in df.iterrows():
-    mask_path = f"./{base_path}/{row['name']}/combined/{row['combined']}"
-    mask = cv2.imread(mask_path)
-    mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)  # matriz de clases (HxW)
-    # Contar ocurrencias de cada clase
-    unique, counts = np.unique(mask, return_counts=True)
-    for cls, cnt in zip(unique, counts):
-        if cls < NUM_CLASSES:
-            pixel_counts[cls] += cnt
-
-# Calcular pesos inversos (más peso a clases menos frecuentes)
-class_weights = 1.0 / (pixel_counts + 1e-6)  # para evitar división por cero
-class_weights = class_weights / class_weights.sum() * NUM_CLASSES  # normalizar
-
-# Convertir a tensor para usar en CrossEntropyLoss
-class_weights_tensor = torch.tensor(class_weights, dtype=torch.float32)
-
+## Número de clases
+#NUM_CLASSES = 7
+## Inicializar contador de clases
+#pixel_counts = np.zeros(NUM_CLASSES, dtype=np.int64)
+#import cv2
+#
+## Recorremos todas las máscaras
+#for _, row in df.iterrows():
+#    mask_path = f"./{base_path}/{row['name']}/combined/{row['combined']}"
+#    mask = cv2.imread(mask_path)
+#    mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)  # matriz de clases (HxW)
+#    # Contar ocurrencias de cada clase
+#    unique, counts = np.unique(mask, return_counts=True)
+#    for cls, cnt in zip(unique, counts):
+#        if cls < NUM_CLASSES:
+#            pixel_counts[cls] += cnt
+#
+## Calcular pesos inversos (más peso a clases menos frecuentes)
+#class_weights = 1.0 / (pixel_counts + 1e-6)  # para evitar división por cero
+#class_weights = class_weights / class_weights.sum() * NUM_CLASSES  # normalizar
+#
+## Convertir a tensor para usar en CrossEntropyLoss
+#class_weights_tensor = torch.tensor(class_weights, dtype=torch.float32)
+#
 model = TransferSegmentation(n_classes=7)
 
 transform = model.weights.transforms()  # resulta mejor con la transformacion propia
@@ -151,20 +151,19 @@ model.to(device)
 #optimizer = torch.optim.Adagrad(
 #    model.parameters(),
 #    lr=1e-2,
-#    weight_decay=1e-4
+#    weight_decay=0
 #)
 criterion = nn.CrossEntropyLoss(
-    weight=class_weights_tensor.to(device)
+    #weight=class_weights_tensor.to(device)
 )  # aplica sigmoid directamente sobre los logits del modelo
 
 optimizer = torch.optim.AdamW(
     model.parameters(),
     lr=1e-2,                # learning rate inicial
-    weight_decay=0,      # regularización L2
     betas=(0.9, 0.999),     # valores por defecto para Adam
-    eps=1e-8                # estabilidad numérica
- )
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max")
+    eps=1e-8,               # estabilidad numérica
+)
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="max",patience=5,factor=0.25)
 
 
 class Trainer:
@@ -180,7 +179,7 @@ class Trainer:
         device,
         log_dir=None,
         num_classes=7,
-        max_epochs=200,
+        max_epochs=1000,
         max_patience=25,
     ):
         self.model = model.to(device)
@@ -235,6 +234,8 @@ class Trainer:
                 self.save_model("TransferSegmentation_Jeff.th")
                 self.best_iou = val_iou
                 self.patience = 0
+            else:
+                self.save_model("last_Jeff.th")
 
             if val_iou < self.val_stoping:
                 if epoch_iou > self.train_stoping:
@@ -245,10 +246,10 @@ class Trainer:
             else:
                 self.val_stoping = val_iou
                 self.patience = 0
-
-            if self.patience >= self.max_patience:
-                print("Early stopping.")
-                break
+            
+            #if self.patience >= self.max_patience:
+            #    print("Early stopping.")
+            #    break
 
     def train_one_epoch(self, epoch):
         self.model.train()
@@ -274,6 +275,12 @@ class Trainer:
             ious.append(batch_iou)
             f1.append(f1_score)
             running_loss += loss.item()
+        test_targets = targets.unsqueeze(1) * 32 / 255
+        pred_mask = post_proces(outputs)
+        test_outputs = pred_mask.unsqueeze(1) * 32 / 255
+        self.writer.add_images("test/image", inputs[:6].cpu(), epoch)
+        self.writer.add_images("test/label", test_targets[:6].cpu(), epoch)
+        self.writer.add_images("test/pred", test_outputs[:6].cpu(), epoch)
 
         mean_iou = np.mean(ious) * 100
         mean_f1 = np.mean(f1) * 100
@@ -339,7 +346,7 @@ if __name__ == "__main__":
         device=device,
         log_dir=log_dir,
         num_classes=7,
-        max_epochs=200,
+        max_epochs=1000,
         max_patience=25,
     )
     trainer.train()
